@@ -1,0 +1,383 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<title>JEV EXPLAINED — how the decision model works, animated explainer</title>
+<meta name="description" content="An autoplaying animated explainer: what Jev is, decision models, calibration, and the JevBench race.">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<style>
+html,body{margin:0;height:100%;background:#000;overflow:hidden}
+body{display:flex;align-items:center;justify-content:center;touch-action:manipulation}
+canvas{display:block;background:#060607;cursor:pointer}
+#rot{display:none;position:fixed;top:10px;left:50%;transform:translateX(-50%);color:#ffb000;font:600 12px 'SF Mono',Menlo,monospace;letter-spacing:.1em;z-index:9;opacity:.85}
+</style></head><body>
+<div id="rot">ROTATE DEVICE FOR FULL VIEW</div>
+<canvas id="c"></canvas>
+<script>
+"use strict";
+const W=1920,H=1080;
+const cv=document.getElementById('c'),g=cv.getContext('2d');
+const DPR=Math.min(devicePixelRatio||1,2);
+function resize(){const s=Math.min(innerWidth/W,innerHeight/H);cv.width=Math.round(W*s*DPR);cv.height=Math.round(H*s*DPR);cv.style.width=(W*s)+'px';cv.style.height=(H*s)+'px';}
+addEventListener('resize',resize);resize();
+document.getElementById('rot').style.display=(innerHeight>innerWidth*1.15)?'block':'none';
+const _rz=resize;resize=function(){_rz();document.getElementById('rot').style.display=(innerHeight>innerWidth*1.15)?'block':'none';};
+const AMBER='#ffb000',AMBERD='#8a6400',TEAL='#4fe3c1',TEALD='#1f6a58',RED='#ff3838',WHITE='#eceae4',GRAY='#7d7d7d',GRAY2='#4a4a4e',BG='#060607';
+const MONO=(s,w)=>(w||400)+' '+s+'px "SF Mono",Menlo,Consolas,"Liberation Mono",monospace';
+const SERIF=(s,w)=>(w||400)+' '+s+'px Georgia,"Times New Roman",serif';
+function txt(s,x,y,font,color,align){g.font=font;g.fillStyle=color;g.textAlign=align||'left';g.textBaseline='alphabetic';g.fillText(s,x,y);}
+function clamp(x,a,b){return x<a?a:x>b?b:x}
+function seg(t,a,b){return clamp((t-a)/(b-a),0,1)}
+function ease(x){x=clamp(x,0,1);return x*x*(3-2*x)}
+function eo(x){x=clamp(x,0,1);return 1-Math.pow(1-x,3)}
+function ei(x){x=clamp(x,0,1);return x*x*x}
+function blink(t,hz){return ((t*hz)%1)<0.6?1:0.18}
+function line(x1,y1,x2,y2,color,w){g.strokeStyle=color;g.lineWidth=w||1.4;g.beginPath();g.moveTo(x1,y1);g.lineTo(x2,y2);g.stroke();}
+function circle(x,y,r,color,w,fill){g.beginPath();g.arc(x,y,r,0,Math.PI*2);if(fill){g.fillStyle=fill;g.fill();}else{g.strokeStyle=color;g.lineWidth=w||1.4;g.stroke();}}
+function frame(x,y,w,h,label,kanji,color){
+ color=color||AMBER;const c=16;g.lineWidth=1.6;g.strokeStyle=color;g.globalAlpha=.95;g.beginPath();
+ g.moveTo(x,y+c);g.lineTo(x,y);g.lineTo(x+c,y);g.moveTo(x+w-c,y);g.lineTo(x+w,y);g.lineTo(x+w,y+c);
+ g.moveTo(x+w,y+h-c);g.lineTo(x+w,y+h);g.lineTo(x+w-c,y+h);g.moveTo(x+c,y+h);g.lineTo(x,y+h);g.lineTo(x,y+h-c);g.stroke();
+ g.globalAlpha=.13;g.strokeRect(x+.5,y+.5,w-1,h-1);g.globalAlpha=1;
+ if(label)txt(label,x+16,y+26,MONO(15,700),color);
+ if(kanji)txt(kanji,x+w-16,y+30,MONO(24,600),color,'right');
+}
+function arrow(x1,y1,x2,y2,color,w,p){ // p = how much of the arrow is drawn 0..1
+ color=color||AMBER;const dx=x2-x1,dy=y2-y1,ex=x1+dx*clamp(p==null?1:p,0,1),ey=y1+dy*clamp(p==null?1:p,0,1);
+ line(x1,y1,ex,ey,color,w||2);
+ if(p==null||p>=1){const a=Math.atan2(dy,dx),s=12;g.fillStyle=color;g.beginPath();g.moveTo(ex,ey);g.lineTo(ex-s*Math.cos(a-.45),ey-s*Math.sin(a-.45));g.lineTo(ex-s*Math.cos(a+.45),ey-s*Math.sin(a+.45));g.closePath();g.fill();}
+}
+const noise=document.createElement('canvas');noise.width=noise.height=128;
+{const nx=noise.getContext('2d');const id=nx.createImageData(128,128);for(let i=0;i<id.data.length;i+=4){const v=(Math.random()*255)|0;id.data[i]=id.data[i+1]=id.data[i+2]=v;id.data[i+3]=255;}nx.putImageData(id,0,0);}
+const TOTAL=0;
+function fmtT(s){s=Math.max(0,s|0);return String((s/60)|0)+':'+String(s%60).padStart(2,'0')}
+let DUR=0;
+function chrome(sc,idx,st,gt){
+ const vg=g.createRadialGradient(W/2,H/2,H*.42,W/2,H/2,H*1.0);vg.addColorStop(0,'rgba(0,0,0,0)');vg.addColorStop(1,'rgba(0,0,0,.6)');g.fillStyle=vg;g.fillRect(0,0,W,H);
+ g.globalAlpha=.045;g.fillStyle='#000';for(let y=0;y<H;y+=4)g.fillRect(0,y,W,1);g.globalAlpha=1;
+ g.globalAlpha=.026;const ox=(Math.random()*128)|0,oy=(Math.random()*128)|0;
+ for(let y=-oy;y<H;y+=128)for(let x=-ox;x<W;x+=128)g.drawImage(noise,x,y);
+ g.globalAlpha=1;
+ if(sc.type!=='title'&&sc.type!=='end'){
+  txt(sc.kanji,80,102,MONO(34,600),AMBER);
+  const kw=80+g.measureText?0:0;
+  txt(sc.code+'  ·  '+sc.tag,190,98,MONO(17,700),AMBER);
+  line(80,118,430,118,AMBERD,1);
+ }
+ // top-right status
+ const tc=fmtT(elapsed())+' / '+fmtT(DUR);
+ txt(playing?'▶ RUN':'❚❚ HOLD',W-80,86,MONO(16,700),playing?TEAL:AMBER,'right');
+ txt(tc,W-80,110,MONO(15,400),GRAY,'right');
+ // caption
+ if(sc.cap){txt(sc.cap,W/2,H-72,SERIF(30,400),WHITE,'center');}
+ // progress
+ const gp=DUR?elapsed()/DUR:0;
+ g.globalAlpha=.9;line(80,H-40,W-80,H-40,GRAY2,2);
+ line(80,H-40,80+(W-160)*gp,H-40,AMBER,3);
+ let acc=0;for(let i=0;i<SCENES.length;i++){const x=80+(W-160)*(acc/DUR);line(x,H-46,x,H-34,GRAY,1);acc+=SCENES[i].dur;}
+ g.globalAlpha=1;
+ txt('SCENE '+String(idx+1).padStart(2,'0')+' / '+String(SCENES.length).padStart(2,'0'),W-80,H-52,MONO(13,600),GRAY,'right');
+ // cut flash
+ if(st<0.14&&idx>0){g.globalAlpha=.22*(1-st/0.14);g.drawImage(noise,0,0,W,H);g.globalAlpha=1;}
+}
+function hintOverlay(gt){
+ if(gt>4.5)return;const a=1-seg(gt,3.4,4.5);g.globalAlpha=a*.9;
+ txt('AUTOPLAY ON — SPACE pause · ← → scenes · R replay',W/2,H-130,MONO(15,600),GRAY,'center');g.globalAlpha=1;
+}
+let playing=true,si=0,st=0,gt=0,startAt=performance.now();
+function elapsed(){let e=0;for(let i=0;i<si;i++)e+=SCENES[i].dur;return e+Math.min(st,SCENES[si].dur);}
+function draw(){
+ g.setTransform(cv.width/W,0,0,cv.height/H,0,0);
+ g.fillStyle=BG;g.fillRect(0,0,W,H);
+ const sc=SCENES[si];
+ sc.draw(st,gt);
+ chrome(sc,si,st,gt);
+ hintOverlay(gt);
+ if(!playing&&si===SCENES.length-1&&st>=SCENES[si].dur-0.01){
+  if(blink(gt,1.4)>.5)txt('— REPLAY : PRESS R —',W/2,H-180,MONO(20,700),AMBER,'center');
+ }
+}
+let last=performance.now();
+function loop(now){const dt=Math.min(.06,(now-last)/1000);last=now;gt+=dt;
+ if(playing){st+=dt;while(si<SCENES.length-1&&st>=SCENES[si].dur){st-=SCENES[si].dur;si++;}
+  if(si===SCENES.length-1&&st>=SCENES[si].dur){st=SCENES[si].dur;playing=false;}}
+ draw();requestAnimationFrame(loop);}
+function go(n){si=clamp(n,0,SCENES.length-1);st=0;playing=true;}
+addEventListener('keydown',e=>{
+ if(e.code==='Space'){playing=!playing;e.preventDefault();}
+ else if(e.key==='ArrowRight')go(si+1);
+ else if(e.key==='ArrowLeft')go(si-1);
+ else if(e.key==='r'||e.key==='R')go(0);
+});
+cv.addEventListener('pointerdown',e=>{
+ const r=cv.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top;
+ if(y>r.height*0.8&&x<r.width*0.18){go(si-1);return;}
+ if(y>r.height*0.8&&x>r.width*0.82){go(si+1);return;}
+ playing=!playing;
+});
+// ============ JEV EXPLAINED : the decision model ============
+function titleCard(st,gt){
+ txt('決定モデル',W/2,300,MONO(22,600),AMBER,'center');
+ txt('JEV',W/2,560,SERIF(150,400),WHITE,'center');
+ g.globalAlpha=ease(seg(st,2.4,4));
+ txt('HOW THE DECISION MODEL WORKS — AND HOW THE RACE TO BEAT IT IS SCORED',W/2,650,MONO(18,600),GRAY,'center');
+ g.globalAlpha=1;
+ line(W/2-260,610,W/2-260+520*ease(seg(st,1.4,3.2)),610,AMBER,2);
+ if(blink(gt,1.2)>.5&&st>4)txt('▶',W/2,730,MONO(26,400),AMBER,'center');
+}
+function phaseCard(num,kanji,title,sub){
+ return (st,gt)=>{
+  const p=ease(seg(st,0,.8));g.globalAlpha=p;
+  txt('PHASE '+num,W/2,420,MONO(20,700),AMBER,'center');
+  line(W/2-160,446,W/2+160,446,AMBERD,1);
+  txt(title,W/2,540,SERIF(64,400),WHITE,'center');
+  txt(sub,W/2,600,MONO(17,500),GRAY,'center');
+  txt(kanji,W-120,140,MONO(30,600),AMBERD,'right');
+  g.globalAlpha=1;
+ };
+}
+// ---- P01 not a chatbot ----
+function notChatScene(st,gt){
+ frame(140,240,760,600,'CHAT MODEL — GENERATES','文章',GRAY);
+ const words=['The','best','option','here','would','probably','be','to','consider','the','trade-offs','of','each','choice','and','then','…'];
+ const n=Math.floor(seg(st,1,9)*words.length);
+ words.forEach((w,i)=>{
+  if(i>=n)return;
+  const x=190+(i%4)*165,y=340+Math.floor(i/4)*64;
+  txt(w,x,y,MONO(24,400),i===n-1?AMBER:GRAY);
+ });
+ if(n<words.length&&blink(gt,3)>.5)txt('▌',190+(n%4)*165,340+Math.floor(n/4)*64,MONO(24,400),AMBER);
+ txt('token after token after token',190,790,MONO(17,500),GRAY);
+ txt('≈ seconds · priced per token',190,826,MONO(17,500),GRAY);
+ frame(1020,240,760,600,'DECISION MODEL — DECIDES','決定',TEAL);
+ const p=ease(seg(st,5,6.4));
+ frame(1080,330,640,120,'STATE + RUBRIC IN','',AMBER);
+ arrow(1400,450,1400,520,AMBER,2.4,seg(st,6,6.8));
+ frame(1210,520,420,130,'ONE PASS','一回',TEAL);
+ arrow(1400,650,1400,720,AMBER,2.4,seg(st,6.8,7.6));
+ g.globalAlpha=p;
+ frame(1080,720,640,120,'TYPED ANSWER OUT','',TEAL);
+ txt('{ "choice": "B", "p": 0.71 }',1400,806,MONO(24,600),TEAL,'center');
+ g.globalAlpha=1;
+}
+// ---- P02 state + rubric in ----
+function inputScene(st,gt){
+ frame(140,240,700,600,'STATE','状態',AMBER);
+ const lines=['{','  "robot": "delivery bot 7",','  "battery": 0.18,','  "rain": true,','  "queue": 3,','  "deadline_min": 40','}'];
+ lines.forEach((l,i)=>{const p=ease(seg(st,0.6+i*0.35,1.1+i*0.35));g.globalAlpha=p;txt(l,180,340+i*52,MONO(22,400),l.includes(':')?WHITE:GRAY);g.globalAlpha=1;});
+ frame(940,240,700,600,'BOUNDED RUBRIC','選択肢',TEAL);
+ const opts=['A · deliver now','B · recharge first','C · reroute indoors','D · hand off to bot 12'];
+ opts.forEach((o,i)=>{const p=ease(seg(st,3.6+i*0.4,4.1+i*0.4));g.globalAlpha=p;
+  frame(980,330+i*110,620,84,'','',i===1?TEAL:GRAY2);
+  txt(o,1010,385+i*110,MONO(21,500),i===1?TEAL:WHITE);g.globalAlpha=1;});
+ arrow(840,540,940,540,AMBER,2.6,seg(st,5.6,6.6));
+ txt('the situation, as data',490,880,MONO(17,500),GRAY,'center');
+ txt('every legal move, listed',1290,880,MONO(17,500),GRAY,'center');
+}
+// ---- P03 typed answer out ----
+function outputScene(st,gt){
+ frame(760,240,400,600,'JEV','決定',AMBER);
+ txt('TypeSafe',1060-100,330,MONO(17,600),GRAY,'center');
+ txt('closed · API',1060-100,362,MONO(17,500),GRAY,'center');
+ const core=blink(gt,2);circle(960,540,90+core*4,AMBER,2);circle(960,540,56,AMBER,1.6);
+ txt('one',960,530,MONO(19,600),AMBER,'center');txt('pass',960,558,MONO(19,600),AMBER,'center');
+ arrow(400,540,760,540,AMBER,2.6,seg(st,1,2));
+ frame(140,430,260,220,'STATE+RUBRIC','',GRAY);
+ // probability bars out
+ const bars=[['A',0.07,GRAY],['B',0.71,TEAL],['C',0.18,AMBER],['D',0.04,GRAY]];
+ arrow(1160,540,1300,540,AMBER,2.6,seg(st,2.4,3.4));
+ bars.forEach((b,i)=>{
+  const p=ease(seg(st,3.4+i*0.5,4.4+i*0.5));
+  const y=430+i*120;
+  txt(b[0],1320,y+30,MONO(24,700),WHITE);
+  g.globalAlpha=.25;line(1370,y+22,1370+380,y+22,GRAY,26);
+  line(1370,y+22,1370+380*b[1]*p,y+22,b[2],26);g.globalAlpha=1;
+  txt((b[1]*p).toFixed(2),1780,y+30,MONO(24,700),b[2]);
+ });
+ g.globalAlpha=ease(seg(st,6.4,7.4));
+ txt('confidence is part of the answer',960,880,MONO(19,500),TEAL,'center');
+ g.globalAlpha=1;
+}
+// ---- P04 calibration ----
+function calibScene(st,gt){
+ frame(140,240,860,600,'RELIABILITY','校正',TEAL);
+ const x0=220,y0=780,S=440;
+ line(x0,y0,x0+S,y0,GRAY2,2);line(x0,y0,x0,y0-S,GRAY2,2);
+ txt('says',x0+S/2,y0+52,MONO(17,600),GRAY,'center');
+ g.save();g.translate(x0-40,y0-S/2);g.rotate(-Math.PI/2);txt('is right',0,0,MONO(17,600),GRAY,'center');g.restore();
+ g.setLineDash([6,8]);line(x0,y0,x0+S,y0-S,GRAY,1.4);g.setLineDash([]);
+ txt('perfect',x0+S-50,y0-S+40,MONO(15,500),GRAY);
+ const pts=[[.1,.08],[.3,.26],[.5,.47],[.7,.66],[.8,.77],[.9,.86]];
+ pts.forEach((p,i)=>{
+  const ap=ease(seg(st,2+i*0.5,2.8+i*0.5));
+  g.globalAlpha=ap;circle(x0+p[0]*S,y0-p[1]*S,11,TEAL,2,TEAL);g.globalAlpha=1;
+ });
+ txt('Jev 1.13.0 — calibration 76.3',x0+40,330,MONO(20,700),TEAL);
+ txt('close to the diagonal = honest',x0+40,366,MONO(16,500),GRAY);
+ frame(1080,240,700,600,'WHY IT MATTERS','信頼',AMBER);
+ const rows=[['says 90%, right 55%','dangerous — overconfident',RED],
+             ['says 60%, right 60%','useful — you can route on it',TEAL]];
+ rows.forEach((r,i)=>{
+  const p=ease(seg(st,5+i*1.4,6+i*1.4));g.globalAlpha=p;
+  frame(1120,330+i*210,620,160,'','',r[2]);
+  txt(r[0],1160,400+i*210,MONO(23,600),WHITE);
+  txt(r[1],1160,448+i*210,MONO(18,500),r[2]);
+  g.globalAlpha=1;
+ });
+}
+// ---- P05 the score ----
+function scoreScene(st,gt){
+ const axes=[['INTELLIGENCE','知能',53.1,AMBER],['CALIBRATION','校正',76.3,TEAL],['SPEED','速度',83,AMBER],['COST','費用',52,TEAL]];
+ axes.forEach((a,i)=>{
+  const x=180+i*440;
+  const p=ease(seg(st,1+i*0.6,2.2+i*0.6));
+  frame(x,300,380,300,a[0],a[1],a[3]);
+  const v=a[2]*p;
+  g.globalAlpha=.2;line(x+40,540,x+300,540,GRAY,34);g.globalAlpha=1;
+  line(x+40,540,x+40+260*(v/100),540,a[3],34);
+  txt(v.toFixed(1),x+310,552,MONO(26,700),a[3],'right');
+  txt('25%',x+40,340,MONO(15,700),GRAY);
+ });
+ const p=ease(seg(st,4.5,6));
+ g.globalAlpha=p;
+ txt('SCORE = 4 / ( 1/I + 1/C + 1/S + 1/K )',W/2,720,MONO(30,700),WHITE,'center');
+ txt('equal-weight harmonic mean — the weakest axis drags the whole number down',W/2,772,MONO(18,500),GRAY,'center');
+ g.globalAlpha=1;
+ g.globalAlpha=ease(seg(st,7,8.4));
+ txt('axes below 50 get gated: ×(axis/50)²',W/2,830,MONO(17,600),RED,'center');
+ g.globalAlpha=1;
+}
+// ---- P06 the race ----
+function raceScene(st,gt){
+ frame(140,240,1640,480,'OFFICIAL JEVBENCH SCORE — v1.4.2, SCORED 24 SEPT 2026','競争',AMBER);
+ const rows=[['#1','decider-4b v2','open weights',64.1,TEAL],
+             ['#2','Jev 1.13.0','TypeSafe · closed',63.3,AMBER]];
+ rows.forEach((r,i)=>{
+  const y=380+i*150;
+  const p=ease(seg(st,1.5+i*1,2.8+i*1));
+  txt(r[0],220,y+30,MONO(30,700),r[4]);
+  txt(r[1],330,y+30,MONO(28,700),WHITE);
+  txt(r[2],330,y+64,MONO(16,500),GRAY);
+  g.globalAlpha=.2;line(800,y+18,1680,y+18,GRAY,30);g.globalAlpha=1;
+  line(800,y+18,800+880*(r[3]/70)*p,y+18,r[4],30);
+  txt(r[3].toFixed(1),1720,y+30,MONO(32,700),r[4]);
+ });
+ g.globalAlpha=ease(seg(st,5.5,7));
+ txt('but: Jev still out-reasons it — intelligence 53.1 vs 49.4 — and calibrates better',W/2,800,MONO(19,600),WHITE,'center');
+ txt('decider wins on speed and cost. sort by intelligence and Jev is still ahead.',W/2,842,MONO(18,500),GRAY,'center');
+ g.globalAlpha=1;
+}
+// ---- P07 class limits ----
+function limitsScene(st,gt){
+ frame(140,240,780,600,'THE JEV-CLASS FENCE','制限',AMBER);
+ const rules=[['cost','≤ 2× Jev — $0.080 / 1k decisions',0],['latency','≤ 2× Jev — 1.30 s median',1]];
+ rules.forEach((r,i)=>{
+  const p=ease(seg(st,1+i*1.2,2+i*1.2));g.globalAlpha=p;
+  txt(r[0],200,380+i*120,MONO(22,700),AMBER);
+  txt(r[1],420,380+i*120,MONO(21,500),WHITE);
+  g.globalAlpha=1;
+ });
+ const p2=ease(seg(st,4.5,6));
+ g.globalAlpha=p2;
+ txt('50 of 91 systems qualify',200,660,MONO(26,700),TEAL);
+ txt('the fence moves when Jev moves — it is defined against the reference',200,706,MONO(16,500),GRAY);
+ g.globalAlpha=1;
+ frame(1020,240,760,600,'OUTSIDE THE FENCE','除外',RED);
+ const out=[['GPT-6 Luna','capability 95.4 — but 3.4× cost, 2.3× latency',95.4],
+            ['Jev 1.13.0','the reference — capability 64.7',64.7]];
+ const p3=ease(seg(st,7,9));
+ g.globalAlpha=p3;
+ out.forEach((o,i)=>{
+  const y=420+i*180;
+  txt(o[0],1080,y,MONO(22,700),i?AMBER:GRAY);
+  txt(o[1],1080,y+34,MONO(16,500),i?GRAY:RED);
+  g.globalAlpha=.2;line(1080,y+70,1720,y+70,GRAY,24);
+  line(1080,y+70,1080+640*(o[2]/100),y+70,i?AMBER:GRAY2,24);g.globalAlpha=p3;
+  txt(String(o[2]),1750,y+78,MONO(24,700),i?AMBER:GRAY,'right');
+ });
+ g.globalAlpha=1;
+ txt('smarter, yes — but too slow and too costly to be a decision layer',W/2,880,MONO(17,500),GRAY,'center');
+}
+// ---- P08 sealed set ----
+function sealedScene(st,gt){
+ frame(140,240,760,600,'PUBLIC — 534 DECISIONS','公開',TEAL);
+ const n1=Math.floor(seg(st,1,3)*534);
+ txt(String(n1),520,560,SERIF(90,700),TEAL,'center');
+ txt('anyone can inspect these',520,640,MONO(18,500),GRAY,'center');
+ frame(1020,240,760,600,'SEALED — 308 DECISIONS','封印',RED);
+ const n2=Math.floor(seg(st,3.5,5.5)*308);
+ txt(String(n2),1400,560,SERIF(90,700),RED,'center');
+ txt('private — aggregate scores only',1400,640,MONO(18,500),GRAY,'center');
+ // vault bolts
+ for(let i=0;i<6;i++){const a=i*Math.PI/3+gt*0.2;circle(1400+300*Math.cos(a)*0.32,300+0,4,GRAY2,1);}
+ const p=ease(seg(st,7,8.6));g.globalAlpha=p;
+ txt('one request at a time · scored from a server in Germany',W/2,880,MONO(19,500),WHITE,'center');
+ txt('harness, public tasks and scoring rules are MIT-licensed — you cannot train on the test',W/2,920,MONO(17,500),GRAY,'center');
+ g.globalAlpha=1;
+}
+// ---- P09 why it matters ----
+function mattersScene(st,gt){
+ const uses=[['ROUTING','経路','which agent, which tool, which model',0],
+             ['SAFETY','安全','allow / refuse / escalate, in milliseconds',1],
+             ['OPTIONS','選択','pick among bounded actions, with confidence',2]];
+ uses.forEach((u,i)=>{
+  const x=180+i*560;
+  const p=ease(seg(st,1+i*0.8,2+i*0.8));g.globalAlpha=p;
+  frame(x,300,500,240,u[0],u[1],i===1?RED:AMBER);
+  txt(u[2],x+30,420,MONO(19,500),WHITE);
+  const hz=Math.floor(gt*3+i)%3;
+  circle(x+430,480,8,i===1?RED:TEAL,2,(hz===0)?(i===1?RED:TEAL):null);
+  g.globalAlpha=1;
+ });
+ const p=ease(seg(st,5,6.6));g.globalAlpha=p;
+ txt('$0.040 buys 1,000 decisions from Jev itself — open rivals are at ~$0.020 and falling',W/2,680,MONO(21,600),TEAL,'center');
+ txt('a chat model writes paragraphs; a decision model is plumbing — called thousands of times a day',W/2,732,MONO(18,500),GRAY,'center');
+ g.globalAlpha=1;
+ // pipeline diagram
+ const pp=seg(st,8,12);
+ const steps=['state','decide','act','state','decide'];
+ steps.forEach((s,i)=>{
+  const x=460+i*250;
+  g.globalAlpha=ease(seg(st,8+i*0.7,8.6+i*0.7));
+  frame(x,800,180,70,'','',i%2?AMBER:TEAL);
+  txt(s,x+90,845,MONO(19,600),i%2?AMBER:TEAL,'center');
+  if(i<steps.length-1)arrow(x+180,835,x+250-8,835,GRAY,2,seg(st,8.4+i*0.7,9+i*0.7));
+  g.globalAlpha=1;
+ });
+}
+// ---- end ----
+function endCard(st,gt){
+ txt('決定モデル',W/2,320,MONO(24,600),AMBER,'center');
+ txt('JEV, HONESTLY',W/2,460,SERIF(72,400),WHITE,'center');
+ line(W/2-200,495,W/2+200,495,AMBERD,1.6);
+ const rows=[['known','state + bounded rubric in, typed answer out — TypeSafe, closed, $0.040/1k'],
+             ['known','JevBench v1.4.2: #2 official score 63.3, top Jev-class capability 64.7'],
+             ['unknown','internals — architecture, training data, size: not public'],
+             ['caveat','JevBench is one third-party benchmark, scored 24 Sept 2026']];
+ rows.forEach((r,i)=>{
+  const p=ease(seg(st,1.5+i*0.7,2.3+i*0.7));g.globalAlpha=p;
+  const col=r[0]==='known'?TEAL:(r[0]==='unknown'?RED:AMBER);
+  txt(r[0].toUpperCase(),W/2-620,580+i*66,MONO(17,700),col);
+  txt(r[1],W/2-430,580+i*66,MONO(19,400),WHITE);
+  g.globalAlpha=1;
+ });
+ g.globalAlpha=ease(seg(st,5.5,7));
+ txt('source: benchmarkheaven.com/jev-models — protocol jevbench::v1.4 · 534 public + 308 sealed',W/2,880,MONO(16,500),GRAY,'center');
+ g.globalAlpha=1;
+}
+const SCENES=[
+ {type:'title',code:'OP 00',kanji:'導入',tag:'INTRO',dur:12,cap:'The model that doesn\u2019t chat — what Jev is, and how the race to beat it is scored.',draw:titleCard},
+ {type:'card',code:'PH 01',kanji:'形状',tag:'THE SHAPE',dur:4.5,cap:'',draw:phaseCard('01','形状','Not a Chatbot','a different shape of model')},
+ {type:'scene',code:'PH 01',kanji:'形状',tag:'NOT A CHATBOT',dur:14,cap:'A chat model generates text token by token. A decision model takes one pass and commits.',draw:notChatScene},
+ {type:'scene',code:'PH 01',kanji:'入力',tag:'STATE IN',dur:13,cap:'In goes the situation as data — the state — plus a bounded rubric: every legal move, listed.',draw:inputScene},
+ {type:'scene',code:'PH 01',kanji:'出力',tag:'ANSWER OUT',dur:13,cap:'Out comes a typed answer — the pick and its confidence — not an essay.',draw:outputScene},
+ {type:'card',code:'PH 02',kanji:'校正',tag:'HONESTY',dur:4.5,cap:'',draw:phaseCard('02','校正','Calibration','when it says 80%, it is right 80% of the time')},
+ {type:'scene',code:'PH 02',kanji:'校正',tag:'CALIBRATION',dur:14,cap:'Calibration: predicted confidence against real accuracy. Near the diagonal means you can trust the number.',draw:calibScene},
+ {type:'scene',code:'PH 02',kanji:'採点',tag:'THE SCORE',dur:15,cap:'JevBench scores four axes equally — intelligence, calibration, speed, cost — as a harmonic mean. One weak axis sinks it.',draw:scoreScene},
+ {type:'card',code:'PH 03',kanji:'競争',tag:'THE RACE',dur:4.5,cap:'',draw:phaseCard('03','競争','The Race','open weights vs the reference')},
+ {type:'scene',code:'PH 03',kanji:'競争',tag:'LEADERBOARD',dur:15,cap:'As of 24 Sept 2026 the open decider-4b v2 edges the official score, 64.1 to 63.3. Jev still out-reasons it.',draw:raceScene},
+ {type:'scene',code:'PH 03',kanji:'制限',tag:'CLASS LIMITS',dur:14,cap:'Jev-class means at most twice Jev\u2019s cost and latency. The big LLMs are smarter — and outside the fence.',draw:limitsScene},
+ {type:'scene',code:'PH 03',kanji:'封印',tag:'SEALED SET',dur:13,cap:'308 sealed decisions no model author can see. You cannot train on the test.',draw:sealedScene},
+ {type:'scene',code:'PH 04',kanji:'意味',tag:'WHY IT MATTERS',dur:16,cap:'Cheap, fast, typed decisions are plumbing: routing, safety, option-picking — thousands of calls a day.',draw:mattersScene},
+ {type:'end',code:'END',kanji:'完了',tag:'FIN',dur:30,cap:'What is known, what is closed, and where the numbers come from. R replays.',draw:endCard},
+];
+DUR=SCENES.reduce((a,s)=>a+s.dur,0);
+requestAnimationFrame(loop);
+</script></body></html>
